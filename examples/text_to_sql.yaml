@@ -1,0 +1,206 @@
+# Text-to-SQL Code Generation Recipe
+#
+# Converted from: docs/assets/recipes/code_generation/text_to_sql.py
+#
+# Generates SQL queries based on natural language instructions with quality scoring.
+# Use model_alias: nvidia-text (or your preferred model alias)
+
+columns:
+  - name: industry_sector
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Healthcare
+        - Finance
+        - Technology
+
+  - name: topic
+    column_type: sampler
+    sampler_type: subcategory
+    params:
+      category: industry_sector
+      values:
+        Healthcare:
+          - Electronic Health Records (EHR) Systems
+          - Telemedicine Platforms
+          - AI-Powered Diagnostic Tools
+        Finance:
+          - Fraud Detection Software
+          - Automated Trading Systems
+          - Personal Finance Apps
+        Technology:
+          - Cloud Computing Platforms
+          - Artificial Intelligence and Machine Learning Platforms
+          - DevOps and CI/CD Tools
+
+  - name: sql_complexity
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Beginner
+        - Intermediate
+        - Advanced
+
+  - name: sql_concept
+    column_type: sampler
+    sampler_type: subcategory
+    params:
+      category: sql_complexity
+      values:
+        Beginner:
+          - Basic SELECT Statements
+          - WHERE Clauses
+          - Basic JOINs
+          - INSERT, UPDATE, DELETE
+        Intermediate:
+          - Aggregation Functions
+          - Multiple JOINs
+          - Subqueries
+          - Views
+        Advanced:
+          - Window Functions
+          - Common Table Expressions (CTEs)
+          - Stored Procedures
+          - Query Optimization
+
+  - name: sql_task_type
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Data Retrieval
+        - Data Manipulation
+        - Analytics and Reporting
+        - Data Transformation
+
+  - name: instruction_phrase
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Write an SQL query that
+        - Create an SQL statement to
+        - Develop an SQL query to
+        - Can you write SQL that
+        - Formulate an SQL query that
+
+  - name: sql_prompt
+    column_type: llm-text
+    model_alias: nvidia-text
+    system_prompt: You are an expert at generating clear and specific SQL tasks.
+    prompt: |
+      Generate an instruction to create SQL code that solves a specific problem.
+      Each instruction should begin with one of the following phrases: {{ instruction_phrase }}.
+
+      Important Guidelines:
+      * Industry Relevance: Ensure the instruction pertains to the {{ industry_sector }} sector and {{ topic }} topic.
+      * SQL Complexity: Tailor the instruction to the {{ sql_complexity }} level. Utilize relevant {{ sql_concept }} where appropriate to match the complexity level.
+      * Task Type: The instruction should involve a {{ sql_task_type }} task.
+      * Clarity and Specificity: Make the problem statement clear and unambiguous. Provide sufficient context to understand the requirements without being overly verbose.
+      * Response Formatting: Do not include any markers such as ### Response ### in the instruction.
+
+  - name: sql_context
+    column_type: llm-code
+    model_alias: nvidia-text
+    code_lang: sql:ansi
+    system_prompt: You are an expert SQL database designer who creates clean, efficient, and well-structured database schemas.
+    prompt: |
+      Generate the SQL for creating database tables that would be relevant for the following instruction:
+      Instruction: {{ sql_prompt }}
+
+      Important Guidelines:
+      * Relevance: Ensure all tables are directly related to the {{ industry_sector }} sector and {{ topic }} topic.
+      * Completeness: Include all essential columns with appropriate data types, primary/foreign keys, and necessary constraints.
+      * Realism: Use realistic table structures typical for the specified industry.
+      * Executable SQL: Provide complete CREATE TABLE statements that can be run without modification.
+      * Consistency: Use consistent naming conventions (e.g., snake_case for table and column names).
+      * Sample Data: Include INSERT statements with sample data that makes sense for the tables (at least 5-10 rows per table).
+
+  - name: sql
+    column_type: llm-code
+    model_alias: nvidia-text
+    code_lang: sql:ansi
+    system_prompt: You are an expert SQL programmer who writes clean, efficient, and well-structured queries.
+    prompt: |
+      Write SQL code for the following instruction based on the provided database context:
+      Instruction: {{ sql_prompt }}
+
+      Database Context:
+      {{ sql_context }}
+
+      Important Guidelines:
+      * Code Quality: Your SQL should be clean, complete, self-contained and accurate.
+      * Code Validity: Please ensure that your SQL code is executable and does not contain any errors.
+      * Context: Base your query on the provided database context. Only reference tables and columns that exist in the context.
+      * Complexity & Concepts: The SQL should be written at a {{ sql_complexity }} level, making use of concepts such as {{ sql_concept }}.
+      * Task Type: Ensure your solution implements the appropriate {{ sql_task_type }} operation.
+      * Comments: Include brief comments explaining the key parts of your query.
+
+  - name: code_validity_result
+    column_type: validation
+    validator_type: code
+    target_columns:
+      - sql
+    validator_params:
+      code_lang: sql:ansi
+    batch_size: 100
+
+  - name: code_judge_result
+    column_type: llm-judge
+    model_alias: nvidia-text
+    prompt: |
+      You are an expert in SQL with deep knowledge of relational modeling, query semantics,
+      and performance tuning across common dialects (e.g., PostgreSQL, MySQL, SQLite, SQL Server).
+      You think critically about correctness, readability, and efficiency.
+
+      Use the SQL Query Quality Rubric below to score the **Generated SQL Query** based on the INSTRUCTIONS.
+
+      #### INSTRUCTIONS
+      The Generated SQL Query should be a valid response to the Natural Language Prompt below
+
+      Natural Language Prompt:
+      {{ sql_prompt }}
+
+      Database Context:
+      {{ sql_context }}
+
+      Generated SQL Query
+      {{ sql }}
+    scores:
+      - name: Relevance
+        description: Adherence to INSTRUCTIONS and CONTEXT
+        options:
+          4: Perfectly meets all specified requirements.
+          3: Meets most requirements with minor deviations.
+          2: Moderate deviation from the instructions.
+          1: Significant deviations from the instructions.
+          0: Does not adhere to the instructions.
+
+      - name: SQL Correctness
+        description: "Syntax and semantic correctness; returns the intended result"
+        options:
+          4: "Valid SQL with correct joins, filters, grouping/aggregation, and NULL handling; produces the intended result set under the stated/implicit dialect."
+          3: "Generally correct with minor issues (e.g., edge-case NULLs, minor grouping detail) but still likely yields the intended result."
+          2: "Partially correct; noticeable semantic mistakes (joins, grouping, filters) that may change results or fail in edge cases."
+          1: "Largely incorrect; major semantic or syntactic errors likely causing failure or wrong results."
+          0: "Invalid SQL or unrelated to the task; will not run or cannot produce a meaningful result."
+
+      - name: Readability
+        description: "Formatting, clarity, and maintainability"
+        options:
+          4: "Cleanly formatted (keywords/clauses consistently styled), clear structure (CTEs/subqueries where helpful), meaningful table/column aliases, and concise."
+          3: "Generally readable with consistent formatting and understandable aliases; could be organized slightly better."
+          2: "Somewhat readable but inconsistent formatting or confusing aliasing; structure is harder to follow."
+          1: "Poorly formatted and hard to read; unclear structure and aliasing."
+          0: "Unreadable or chaotic; no meaningful structure or styling."
+
+      - name: Efficiency
+        description: "Query performance best practices"
+        options:
+          4: "Uses sargable predicates, appropriate joins, selective filters early, avoids SELECT *, unnecessary DISTINCT, and wasteful subqueries; likely to use indexes effectively."
+          3: "Mostly efficient; minor opportunities for improvement (e.g., simplifying expressions, reducing data early)."
+          2: "Moderate inefficiencies (e.g., non-sargable filters, unnecessary nested subqueries, broad SELECT *)."
+          1: "Notably inefficient patterns likely causing large scans or poor plans."
+          0: "Highly inefficient; ignores basic best practices and likely to perform very poorly."

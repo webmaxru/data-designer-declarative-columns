@@ -1,0 +1,218 @@
+# Example YAML-based declarative column configuration for Data Designer
+# 
+# This file demonstrates how to define columns using YAML instead of
+# the imperative Python API. The yaml_declarative_sample.py script
+# parses this file and creates the equivalent Data Designer configuration.
+#
+# Supported column types:
+#   - sampler: Generate data using built-in samplers (UUID, Category, Uniform, etc.)
+#   - llm-text: Generate free-form text using LLMs
+#   - llm-code: Generate code in a specific language
+#   - llm-structured: Generate structured JSON output
+#   - llm-judge: Evaluate and score content using LLMs
+#   - expression: Compute derived values using Jinja2 expressions
+#   - validation: Validate generated data
+#   - embedding: Generate embeddings for text
+
+columns:
+  # -----------------------------------------------------
+  # Sampler columns - efficient data generation
+  # -----------------------------------------------------
+  
+  # UUID sampler - generates unique identifiers
+  - name: request_id
+    column_type: sampler
+    sampler_type: uuid
+    params: {}
+
+  # Category sampler with weights
+  - name: product_category
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Electronics
+        - Clothing
+        - Books
+        - Home & Garden
+      weights:
+        - 3
+        - 2
+        - 2
+        - 1
+
+  # Subcategory sampler - depends on product_category
+  - name: product_subcategory
+    column_type: sampler
+    sampler_type: subcategory
+    params:
+      category: product_category
+      values:
+        Electronics:
+          - Smartphones
+          - Laptops
+          - Headphones
+        Clothing:
+          - T-Shirts
+          - Jeans
+          - Dresses
+        Books:
+          - Fiction
+          - Non-Fiction
+          - Technical
+        Home & Garden:
+          - Furniture
+          - Plants
+          - Kitchen
+
+  # Uniform sampler for price (float range)
+  - name: price
+    column_type: sampler
+    sampler_type: uniform
+    params:
+      low: 9.99
+      high: 499.99
+
+  # Gaussian sampler for rating
+  - name: base_rating
+    column_type: sampler
+    sampler_type: gaussian
+    params:
+      mean: 4.0
+      stddev: 0.8
+    convert_to: float
+
+  # Datetime sampler for purchase date
+  - name: purchase_date
+    column_type: sampler
+    sampler_type: datetime
+    params:
+      start: "2024-01-01"
+      end: "2024-12-31"
+      unit: D
+
+  # Person sampler using Faker (Approach 1 - no dataset download required)
+  # Generates basic PII data using the Faker library
+  - name: customer
+    column_type: sampler
+    sampler_type: person_from_faker
+    params:
+      locale: en_US
+      age_range:
+        - 18
+        - 65
+
+  # -----------------------------------------------------
+  # LLM Text column - free-form text generation
+  # -----------------------------------------------------
+  
+  - name: review
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Write a realistic customer review for a {{ product_subcategory }} 
+      in the {{ product_category }} category.
+      
+      The product costs ${{ price | round(2) }}.
+      The customer's overall sentiment should reflect a rating of {{ base_rating | round(1) }}/5.
+      
+      Write 2-3 sentences from the customer's perspective.
+    system_prompt: |
+      You are a helpful assistant that generates realistic product reviews.
+      Be concise and authentic. Do not include the rating number in the review text.
+
+  # -----------------------------------------------------
+  # LLM Code column - code generation
+  # -----------------------------------------------------
+  
+  - name: sql_query
+    column_type: llm-code
+    model_alias: nvidia-text
+    code_lang: "sql:postgres"
+    prompt: |
+      Write a SQL query to find products in the "{{ product_category }}" category
+      with a price less than {{ price | round(2) }}.
+      
+      Assume a table named "products" with columns: id, name, category, price, rating.
+
+  # -----------------------------------------------------
+  # Expression column - derived/computed values
+  # -----------------------------------------------------
+  
+  - name: review_word_count
+    column_type: expression
+    expr: "{{ review.split()|length }}"
+    dtype: int
+
+  - name: price_tier
+    column_type: expression
+    expr: |
+      {% if price < 50 %}budget{% elif price < 200 %}mid-range{% else %}premium{% endif %}
+    dtype: str
+
+  # Customer name expression - derived from person sampler
+  - name: customer_name
+    column_type: expression
+    expr: "{{ customer.first_name }} {{ customer.last_name }}"
+    dtype: str
+
+  # -----------------------------------------------------
+  # LLM Structured column - JSON output
+  # -----------------------------------------------------
+  
+  - name: review_analysis
+    column_type: llm-structured
+    model_alias: nvidia-text
+    prompt: |
+      Analyze this product review and extract structured information:
+      
+      Review: "{{ review }}"
+      
+      Extract the sentiment, key topics mentioned, and whether the reviewer
+      would recommend the product.
+    output_format:
+      type: object
+      properties:
+        sentiment:
+          type: string
+          enum:
+            - positive
+            - neutral
+            - negative
+        topics:
+          type: array
+          items:
+            type: string
+        would_recommend:
+          type: boolean
+      required:
+        - sentiment
+        - topics
+        - would_recommend
+
+  # -----------------------------------------------------
+  # LLM Judge column - quality assessment
+  # -----------------------------------------------------
+  
+  - name: review_quality
+    column_type: llm-judge
+    model_alias: nvidia-text
+    prompt: |
+      Evaluate the quality of this product review:
+      
+      Review: "{{ review }}"
+      
+      Consider: Is it helpful? Is it specific? Does it sound authentic?
+    scores:
+      - name: helpfulness
+        description: How helpful is this review for other customers making a purchase decision?
+        options:
+          1: Not helpful - vague or irrelevant
+          2: Somewhat helpful - mentions some useful details
+          3: Very helpful - specific, detailed, and informative
+      - name: authenticity
+        description: Does this review sound like it was written by a real customer?
+        options:
+          1: Sounds fake or generated
+          2: Somewhat authentic
+          3: Very authentic and genuine

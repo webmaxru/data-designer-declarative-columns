@@ -1,0 +1,150 @@
+# Multi-Turn Chat Conversation Recipe
+#
+# Converted from: docs/assets/recipes/qa_and_chat/multi_turn_chat.py
+#
+# Generates multi-turn chat conversations between a user and AI assistant.
+# Includes toxicity evaluation of user messages.
+# Use model_alias: nvidia-text (or your preferred model alias)
+#
+# Note: This recipe uses llm-structured with a Pydantic model for conversations.
+# The output_format field requires the schema to be defined inline.
+
+columns:
+  - name: domain
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Tech Support
+        - Personal Finances
+        - Educational Guidance
+
+  - name: topic
+    column_type: sampler
+    sampler_type: subcategory
+    params:
+      category: domain
+      values:
+        Tech Support:
+          - Troubleshooting a Laptop
+          - Setting Up a Home Wi-Fi Network
+          - Installing Software Updates
+        Personal Finances:
+          - Budgeting Advice
+          - Understanding Taxes
+          - Investment Strategies
+        Educational Guidance:
+          - Choosing a College Major
+          - Effective Studying Techniques
+          - Learning a New Language
+
+  - name: complexity
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Basic
+        - Intermediate
+        - Advanced
+
+  - name: conversation_length
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - 2
+        - 4
+        - 6
+        - 8
+
+  - name: user_mood
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - happy
+        - silly
+        - sarcastic
+        - combative
+        - disappointed
+        - toxic
+
+  - name: assistant_system_prompt
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Write a reasonable system prompt for a helpful AI assistant with expertise in
+      {{ domain }} and {{ topic }}. The AI assistant must not engage in harmful behaviors.
+
+  - name: user_task
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Define a simple task related to {{ topic }} of {{ complexity }} complexity for the user.
+
+  - name: conversation
+    column_type: llm-structured
+    model_alias: nvidia-text
+    prompt: |
+      <task>
+      {{ user_task }}
+      </task>
+
+      <system_prompt>{{ assistant_system_prompt }}</system_prompt>
+
+      Generate a conversation between a user and an AI assistant with <system_prompt> about <task>.
+      User is asking the assistant for advice and is in a {{ user_mood }} mood.
+      The conversation must be {{ conversation_length }} messages in length.
+      The conversation must come to a natural end in {{ conversation_length }} messages and if the assistant is unable
+      to solve the user's needs by then, they should offer to continue the conversation later or redirect them to additional resources.
+      The conversation must be realistic and natural, incorporating details from both the user's and assistant's profiles.
+      The AI assistant role has the system prompt defined in <system_prompt>. All of its responses must conform to <system_prompt>:
+    output_format:
+      type: object
+      description: "A chat conversation between a specific user and an AI assistant."
+      properties:
+        conversation:
+          type: array
+          description: "List of all messages in the conversation."
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum:
+                  - user
+                  - assistant
+                description: "Which role is writing the message."
+              content:
+                type: string
+                description: "Message contents."
+            required:
+              - role
+              - content
+      required:
+        - conversation
+
+  - name: toxicity_evaluation
+    column_type: llm-judge
+    model_alias: nvidia-text
+    prompt: |
+      You are an expert in content moderation and digital communication ethics.
+      You are evaluating the toxicity level in user messages.
+      Take a deep breath and carefully analyze the conversation provided.
+      Use the rubric to score the level of toxicity in the USER'S messages only.
+      Consider:
+      - Focus primarily on harassment, hate, or harmful language
+      - Evaluate the full context of the conversation
+      - Be objective and consistent in your assessment
+      - If any single message exhibits toxicity, it should influence the final score
+      ## CONVERSATION
+      {{ conversation }}
+    scores:
+      - name: Toxicity
+        description: "Evaluation of harmful, harassing, or hateful language in conversations"
+        options:
+          4: "No toxicity detected; conversation is respectful and appropriate."
+          3: "Mild toxicity; slightly rude or sarcastic but not hateful or harmful."
+          2: "Moderate toxicity; contains disrespectful or harassing language."
+          1: "Severe toxicity; contains overt hate, harassment, or harmful content."
+          0: "Extreme toxicity; contains dangerous, threatening, or abusive content."

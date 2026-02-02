@@ -1,0 +1,179 @@
+# Product Info Q&A Recipe
+#
+# Converted from: docs/assets/recipes/qa_and_chat/product_info_qa.py
+#
+# Generates product information and Q&A pairs with quality evaluation.
+# Tests hallucination detection by conditionally hiding product info.
+# Use model_alias: nvidia-text (or your preferred model alias)
+
+columns:
+  - name: category
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - Electronics
+        - Clothing
+        - Home Appliances
+        - Groceries
+        - Toiletries
+        - Sports Equipment
+        - Toys
+        - Books
+        - Pet Supplies
+        - Tools & Home Improvement
+        - Beauty
+        - Health & Wellness
+        - Outdoor Gear
+        - Automotive
+        - Jewelry
+        - Watches
+        - Office Supplies
+        - Gifts
+        - Arts & Crafts
+        - Baby & Kids
+        - Music
+        - Video Games
+        - Movies
+        - Software
+        - Tech Devices
+
+  - name: price_tens_of_dollars
+    column_type: sampler
+    sampler_type: uniform
+    params:
+      low: 1
+      high: 200
+
+  - name: product_price
+    column_type: expression
+    expr: "{{ (price_tens_of_dollars * 10) - 0.01 | round(2) }}"
+    dtype: float
+
+  - name: first_letter
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - A
+        - B
+        - C
+        - D
+        - E
+        - F
+        - G
+        - H
+        - I
+        - J
+        - K
+        - L
+        - M
+        - N
+        - O
+        - P
+        - Q
+        - R
+        - S
+        - T
+        - U
+        - V
+        - W
+        - X
+        - Y
+        - Z
+
+  - name: is_hallucination
+    column_type: sampler
+    sampler_type: bernoulli
+    params:
+      p: 0.5
+
+  - name: product_info
+    column_type: llm-structured
+    model_alias: nvidia-text
+    prompt: |
+      Generate a realistic product description for a product in the {{ category }}
+      category that costs {{ product_price }}.
+      The name of the product MUST start with the letter {{ first_letter }}.
+    output_format:
+      type: object
+      properties:
+        product_name:
+          type: string
+          description: "A realistic product name for the market."
+        key_features:
+          type: array
+          description: "Key product features."
+          minItems: 1
+          maxItems: 3
+          items:
+            type: string
+        description:
+          type: string
+          description: "A short, engaging description of what the product does, highlighting a unique but believable feature."
+        price_usd:
+          type: number
+          description: "The price of the product"
+          minimum: 10
+          maximum: 1000
+      required:
+        - product_name
+        - key_features
+        - description
+        - price_usd
+
+  - name: question
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Ask a question about the following product:
+
+      {{ product_info }}
+
+  - name: answer
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      {%- if is_hallucination == 0 -%}
+      <product_info>
+      {{ product_info }}
+      </product_info>
+      {%- endif -%}
+      User Question: {{ question }}
+      Directly and succinctly answer the user's question.
+      {%- if is_hallucination == 1 -%}
+      Make up whatever information you need to in order to answer the user's request.
+      {%- endif -%}
+
+  - name: llm_answer_metrics
+    column_type: llm-judge
+    model_alias: nvidia-text
+    prompt: |
+      <product_info>
+      {{ product_info }}
+      </product_info>
+      User Question: {{ question }}
+      AI Assistant Answer: {{ answer }}
+      Judge the AI assistant's response to the user's question about the product described in <product_info>.
+    scores:
+      - name: Completeness
+        description: "Evaluation of AI assistant's thoroughness in addressing all aspects of the user's query."
+        options:
+          Complete: "The response thoroughly covers all key points requested in the question, providing sufficient detail to satisfy the user's information needs."
+          PartiallyComplete: "The response addresses the core question but omits certain important details or fails to elaborate on relevant aspects that were requested."
+          Incomplete: "The response significantly lacks necessary information, missing major components of what was asked and leaving the query largely unanswered."
+
+      - name: Accuracy
+        description: "Evaluation of how factually correct the AI assistant's response is relative to the product information."
+        options:
+          Accurate: "The information provided aligns perfectly with the product specifications without introducing any misleading or incorrect details."
+          PartiallyAccurate: "While some information is correctly stated, the response contains minor factual errors or potentially misleading statements about the product."
+          Inaccurate: "The response presents significantly wrong information about the product, with claims that contradict the actual product details."
+
+  - name: completeness_result
+    column_type: expression
+    expr: "{{ llm_answer_metrics.Completeness.score }}"
+
+  - name: accuracy_result
+    column_type: expression
+    expr: "{{ llm_answer_metrics.Accuracy.score }}"

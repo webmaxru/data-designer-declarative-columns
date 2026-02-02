@@ -1,0 +1,127 @@
+# MCP + Tool Use Recipe: Document Q&A with BM25S Lexical Search
+#
+# This YAML configuration demonstrates document Q&A generation using MCP tools.
+# The MCP server provides search_docs and list_docs tools for document retrieval.
+#
+# Note: The actual MCP server (BM25 indexing, PDF extraction) must be defined in Python.
+# This YAML only defines the column configurations and tool settings.
+#
+# Usage:
+#   from data_designer_declarative_columns.config import DeclarativeColumnsConfig
+#   import data_designer.config as dd
+#   from data_designer.interface import DataDesigner
+#
+#   # Load configuration
+#   config = DeclarativeColumnsConfig(file="pdf_qa.yaml")
+#
+#   # Create builder with tool configs from YAML
+#   builder = dd.DataDesignerConfigBuilder(tool_configs=config.get_tool_configs())
+#   config.add_columns_to_builder(builder)
+#
+#   # Create DataDesigner with your MCP provider (defined in Python)
+#   mcp_provider = dd.LocalStdioMCPProvider(
+#       name="doc-bm25-search",
+#       command=sys.executable,
+#       args=["pdf_qa_server.py", "serve"],
+#       env={"PDF_SOURCES": json.dumps(["path/to/doc.pdf"])},
+#   )
+#   data_designer = DataDesigner(mcp_providers=[mcp_provider])
+#   preview_results = data_designer.preview(builder, num_records=4)
+
+tool_configs:
+  - tool_alias: doc-search
+    providers:
+      - doc-bm25-search
+    allow_tools:
+      - list_docs
+      - search_docs
+    max_tool_call_turns: 100
+    timeout_sec: 30.0
+
+columns:
+  # Seed ID column (dropped from final output)
+  - name: seed_id
+    column_type: sampler
+    sampler_type: uuid
+    params: {}
+    drop: true
+
+  # Extract topics from documents using tool calls
+  # Output format is a JSON schema for structured output
+  - name: topic_candidates
+    column_type: llm-structured
+    model_alias: nvidia-text
+    prompt: Extract a high-level list of all topics covered by documents our knowledge base.
+    system_prompt: >
+      You must call tools before answering.
+      Do not use outside knowledge; only use tool results.
+      You can use as many tool calls as required to answer the user query.
+    output_format:
+      type: object
+      properties:
+        topics:
+          type: array
+          items:
+            type: string
+          description: High-level topics covered by the document.
+      required:
+        - topics
+    tool_alias: doc-search
+    with_trace: true
+
+  # Pick a random topic from the extracted list
+  - name: topic
+    column_type: expression
+    expr: "{{ topic_candidates.topics | random }}"
+
+  # Generate Q&A pair using document search
+  - name: qa_pair
+    column_type: llm-structured
+    model_alias: nvidia-text
+    prompt: |
+      Create a question-answer pair on the topic "{{topic}}", with supporting text and citation.
+      The supporting_passage must be a 2-4 sentence excerpt copied from the tool result that demonstrates
+      why the answer is correct.
+    system_prompt: >
+      You must call tools before answering.
+      Do not use outside knowledge; only use tool results.
+      You can use as many tool calls as required to answer the user query.
+    output_format:
+      type: object
+      properties:
+        question:
+          type: string
+          description: A question grounded in the document text.
+        answer:
+          type: string
+          description: A concise answer grounded in the supporting passage.
+        supporting_passage:
+          type: string
+          description: A short excerpt (2-4 sentences) copied from the search result that supports the answer.
+        citation:
+          type: string
+          description: The citation (e.g. source url, page number, etc) of the supporting passage.
+      required:
+        - question
+        - answer
+        - supporting_passage
+        - citation
+    tool_alias: doc-search
+    with_trace: true
+
+  # Extract individual fields from the Q&A pair
+  - name: question
+    column_type: expression
+    expr: "{{ qa_pair.question }}"
+
+  - name: answer
+    column_type: expression
+    expr: "{{ qa_pair.answer }}"
+
+  - name: supporting_passage
+    column_type: expression
+    expr: "{{ qa_pair.supporting_passage }}"
+
+  - name: citation
+    column_type: expression
+    expr: "{{ qa_pair.citation }}"

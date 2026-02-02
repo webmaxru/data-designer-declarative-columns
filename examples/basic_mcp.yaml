@@ -1,0 +1,89 @@
+# Basic MCP Recipe: Simple Tool Use Example
+#
+# This YAML configuration demonstrates the MCP tool-calling workflow.
+# Note: The actual MCP server (tool implementations) must still be defined in Python.
+#
+# Usage:
+#   from data_designer_declarative_columns.config import DeclarativeColumnsConfig
+#   import data_designer.config as dd
+#   from data_designer.interface import DataDesigner
+#
+#   # Load configuration
+#   config = DeclarativeColumnsConfig(file="basic_mcp.yaml")
+#
+#   # Create builder with tool configs from YAML
+#   builder = dd.DataDesignerConfigBuilder(tool_configs=config.get_tool_configs())
+#   config.add_columns_to_builder(builder)
+#
+#   # Create DataDesigner with your MCP provider (defined in Python)
+#   mcp_provider = dd.LocalStdioMCPProvider(
+#       name="basic-tools",
+#       command=sys.executable,
+#       args=["your_mcp_server.py", "serve"],
+#   )
+#   data_designer = DataDesigner(mcp_providers=[mcp_provider])
+#   preview_results = data_designer.preview(builder, num_records=2)
+
+tool_configs:
+  - tool_alias: basic-tools
+    providers:
+      - basic-tools
+    allow_tools:
+      - get_fact
+      - add_numbers
+      - list_topics
+    max_tool_call_turns: 5
+    timeout_sec: 30.0
+
+columns:
+  # Seed column with topics to look up
+  - name: topic
+    column_type: sampler
+    sampler_type: category
+    params:
+      values:
+        - python
+        - earth
+        - water
+        - light
+
+  # Column that uses the get_fact tool
+  - name: fact_response
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Use the get_fact tool to look up information about '{{ topic }}',
+      then provide a one-sentence summary of what you learned.
+    system_prompt: >
+      You must call the get_fact tool before answering.
+      Only use information from tool results.
+    tool_alias: basic-tools
+    with_trace: true
+
+  # Random numbers for math operations
+  - name: num_a
+    column_type: sampler
+    sampler_type: uniform
+    params:
+      low: 1
+      high: 100
+
+  - name: num_b
+    column_type: sampler
+    sampler_type: uniform
+    params:
+      low: 1
+      high: 100
+
+  # Column that uses the add_numbers tool
+  - name: math_response
+    column_type: llm-text
+    model_alias: nvidia-text
+    prompt: |
+      Use the add_numbers tool to calculate {{ num_a }} + {{ num_b }},
+      then report the result in a complete sentence.
+    system_prompt: >
+      You must call the add_numbers tool to perform the calculation.
+      Report the exact result.
+    tool_alias: basic-tools
+    with_trace: true
