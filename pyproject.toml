@@ -1,6 +1,6 @@
 [project]
 name = "data-designer-declarative-columns"
-version = "1.0.0"
+version = "1.0.1"
 description = "Data Designer utility for loading column configurations from YAML files"
 readme = "README.md"
 requires-python = ">=3.10"
