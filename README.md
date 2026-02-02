@@ -12,11 +12,23 @@ A Data Designer utility that allows loading multiple column configurations from 
 
 ## Installation
 
-```bash
-# From the plugin directory
-uv pip install -e .
+Install from PyPI:
 
-# Or with pip
+```bash
+pip install data-designer-declarative-columns
+```
+
+Or with uv:
+
+```bash
+uv add data-designer-declarative-columns
+```
+
+For development (editable install):
+
+```bash
+git clone https://github.com/webmaxru/data-designer-declarative-columns.git
+cd data-designer-declarative-columns
 pip install -e .
 ```
 
